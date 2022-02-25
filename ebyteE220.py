@@ -58,6 +58,7 @@ class EbyteE220:
 
     # UART ports
     PORT = {'U1': 1, 'U2': 2}
+    REGLEN = 0x08
 
     '''REG0'''
     # UART Serial Port Rate(bps) /baudrate, 02H : 7-6-5
@@ -77,8 +78,8 @@ class EbyteE220:
     # Reg1 Reserve, 03H : 4-3-2
     REG1_432 = '000'
     # LoRa Transmitting Power, 03H : 1-0
-    TXPOWER = {22: {'22dbm': '00', '17dbm': '01', '13dbm': '10', '10dbm': '11'},
-               30: {'30dbm': '00', '27dbm': '01', '24dbm': '10', '21dbm': '11'}}
+    TXPOWER = {'22': {'22dbm': '00', '17dbm': '01', '13dbm': '10', '10dbm': '11'},
+               '30': {'30dbm': '00', '27dbm': '01', '24dbm': '10', '21dbm': '11'}}
 
     '''REG3'''
     # LoRa Enable RSSI Byte, 05H : 7
@@ -95,20 +96,18 @@ class EbyteE220:
     WORCLYCLE = {'500ms': '000', '1000ms': '001', '1500ms': '010', '2000ms': '011',
                  '2500ms': '100', '3000ms': '101', '3500ms': '110', '4000ms': '111'}
 
-    # Commands
-    CMDS = {'SetRegister': 0xC0,
-            'GetRegister': 0xC1,
-            'SetTempRegister': 0xC2, }
+    # Configuration Head Commands
+    CONFIGCMDS = {'SetRegister': 0xC0,
+                  'GetRegister': 0xC1,
+                  'SetTempRegister': 0xC2}
 
     # operation modes (set with M0 & M1)
     OPERMODE = {'TxRx': '00', 'WORtx': '01', 'WORrx': '10', 'DeepSleep': '11'}
 
     # model frequency ranges (MHz)
     KR_FREQ = [920.9, 923.3]
-    FREQ = {400: [410, 493], 900: [850, 930]}
+    FREQ = {'400': [410, 410.125, 493.125], '900': [850, 850.125, 930.125]}
 
-    # 20dBm = 100mW - 27dBm = 500 mW - 30dBm = 1000 mW (1 W)
-    MAXPOW = {'T20': 0, 'T27': 1, 'T30': 2}
     # transmission mode
     TRANSMODE = {0: 'transparent', 1: 'fixed'}
 
@@ -121,31 +120,29 @@ class EbyteE220:
     # Forward Error Correction (FEC) mode
     FEC = {0: 'off', 1: 'on'}
 
-    def __init__(self, PinM0, PinM1, PinAUX, Model='E220-900T30D', Port='U1', Baudrate=9600, Parity='8N1',
-                 AirDataRate='2.4k', Address=0x0000, Channel=0x06, debug=False):
+    def __init__(self, pinm0, pinm1, pinaux, model='E220-900T22D', port='U1', baudrate=9600, parity='8N1',
+                 airdatarate='2.4k', address=0x0000, channel=0x48, debug=False):
         ''' constructor for ebyte E32 LoRa module '''
         # configuration in dictionary
         self.config = {}
-        self.config['model'] = Model  # E220 model (default E220-900T30D)
-        self.config['port'] = Port  # UART channel on the ESP32 (default U1)
-        self.config['baudrate'] = Baudrate  # UART baudrate (default 9600)
-        self.config['parity'] = Parity  # UART Parity (default 8N1)
-        self.config['datarate'] = AirDataRate  # wireless baudrate (default 2.4k)
-        self.config['address'] = Address  # target address (default 0x0000)
-        self.config['channel'] = Channel  # target channel (0-31, default 0x06)
+        self.config['model'] = model
+        self.validmodel(model)  # E220 model valid (default E220-900T22D)
+        self.config['port'] = port  # UART channel on the ESP32 (default U1)
+        self.config['baudrate'] = baudrate  # UART baudrate (default 9600)
+        self.config['parity'] = parity  # UART Parity (default 8N1)
+        self.config['datarate'] = airdatarate  # wireless baudrate (default 2.4k)
+        self.config['address'] = address  # target address (default 0x0000)
+        self.config['channel'] = channel  # target channel (default 0x48 for Korea)
         self.calcFrequency()  # calculate frequency (min frequency + channel*1 MHz)
         self.config['transmode'] = 0  # transmission mode (default 0 - tranparent)
-        self.config['iomode'] = 1  # IO mode (default 1 = not floating)
-        self.config['wutime'] = 0  # wakeup time from sleep mode (default 0 = 250ms)
-        self.config['fec'] = 1  # forward error correction (default 1 = on)
-        self.config['txpower'] = 0  # transmission power (default 0 = 20dBm/100mW)
-        #
-        self.PinM0 = PinM0  # M0 pin number
-        self.PinM1 = PinM1  # M1 pin number
-        self.PinAUX = PinAUX  # AUX pin number
+        self.config['worchcle'] = '500ms'  # wakeup time from sleep mode (default 0 = 250ms)
+        self.config['txpower'] = '00'  # transmission power (default 22dBm)
+        self.PinM0 = pinm0  # M0 pin number
+        self.PinM1 = pinm1  # M1 pin number
+        self.PinAUX = pinaux  # AUX pin number
         self.M0 = None  # instance for M0 Pin (set operation mode)
         self.M1 = None  # instance for M1 Pin (set operation mode)
-        self.AUX = None  # instance for AUX Pin (device status : 0=busy - 1=idle)
+        self.AUX = None  # instance for AUX Pin (device status : 0=busy, 1=idle)
         self.serdev = None  # instance for UART
         self.debug = debug
 
@@ -153,18 +150,14 @@ class EbyteE220:
         ''' Start the ebyte E220 LoRa module '''
         try:
             # check parameters
-            if int(self.config['model'].split('T')[0]) not in self.FREQ:
-                self.config['model'] = '868T20D'
             if self.config['port'] not in self.PORT:
                 self.config['port'] = 'U1'
             if int(self.config['baudrate']) not in self.BAUDRATE:
                 self.config['baudrate'] = 9600
             if self.config['parity'] not in self.PARSTR:
                 self.config['parity'] = '8N1'
-            if self.config['datarate'] not in self.DATARATE:
+            if self.config['datarate'] not in self.AIRDATARATE:
                 self.config['datarate'] = '2.4k'
-            if self.config['channel'] > 31:
-                self.config['channel'] = 31
             # make UART instance
             self.serdev = UART(self.PORT.get(self.config['port']))
             # init UART
@@ -317,64 +310,37 @@ class EbyteE220:
                 print("error on stop UART", E)
             return "NOK"
 
-    def sendCommand(self, command):
+    def sendCommand(self, configcommand):
         ''' Send a command to the ebyte E32 LoRa module.
             The module has to be in sleep mode '''
         try:
             # put into sleep mode
             self.setOperationMode('DeepSleep')
             # send command
-            HexCmd = self.CMDS.get(command)
+            HexCmd = self.CONFIGCMDS.get(configcommand)
             if HexCmd in [0xC0, 0xC2]:  # set config to device
                 header = HexCmd
-                HexCmd = self.encodeConfig()
+                HexCmd = self.encodeConfig(header)
                 HexCmd[0] = header
             else:  # get config, get version, reset
-                HexCmd = [HexCmd] * 3
+                HexCmd = [HexCmd, 0x00, self.REGLEN]
             if self.debug:
                 print(HexCmd)
             self.serdev.write(bytes(HexCmd))
             # wait for result
             utime.sleep_ms(50)
             # read result
-            if command == 'reset':
-                result = ''
-            else:
-                result = self.serdev.read()
-                # wait for result
-                utime.sleep_ms(50)
-                # debug
-                if self.debug:
-                    print(result)
+            result = self.serdev.read()
+            # wait for result
+            utime.sleep_ms(50)
+            # debug
+            if self.debug:
+                print(result)
             return result
 
         except Exception as E:
             if self.debug:
                 print('Error on sendCommand: ', E)
-            return "NOK"
-
-    def getVersion(self):
-        ''' Get the version info from the ebyte E32 LoRa module '''
-        try:
-            # send the command
-            result = self.sendCommand('getVersion')
-            # check result
-            if len(result) != 4:
-                return "NOK"
-            # decode result
-            freq = self.FREQV.get(hex(result[1]), 'unknown')
-            # show version
-            if result[0] == 0xc3:
-                print('================= E32 MODULE ===================')
-                print('model       \t%dMhz' % (freq))
-                print('version     \t%d' % (result[2]))
-                print('features    \t%d' % (result[3]))
-                print('================================================')
-            return "OK"
-
-        except Exception as E:
-            if self.debug:
-                print('Error on getVersion: ', E)
             return "NOK"
 
     def getConfig(self):
@@ -417,12 +383,12 @@ class EbyteE220:
         self.config['fec'] = int(bits[5:6])
         self.config['txpower'] = int(bits[6:])
 
-    def encodeConfig(self):
+    def encodeConfig(self, headercommand):
         ''' encode the config dictionary to create the config message of the ebyte E32 LoRa module '''
         # Initialize config message
         message = []
         # message byte 0 = header
-        message.append(0xC0)
+        message.append(headercommand)
         # message byte 1 = high address
         message.append(self.config['address'] // 256)
         # message byte 2 = low address
@@ -488,17 +454,27 @@ class EbyteE220:
             result = ujson.load(infile)
         print(self.config)
 
+    def validmodel(self, model):
+        '''define model'''
+        modelsplit = model.split('-')
+        if len(modelsplit) > 1 and model[1][:3] in self.FREQ and model[1][-3:-1] in self.TXPOWER:
+            pass
+        else:
+            self.config['model'] = 'E220-900T22D'
+
     def calcFrequency(self):
-        ''' Calculate the frequency (= minimum frequency + channel * 1MHz)'''
-        # get minimum and maximum frequency
-        freqkey = int(self.config['model'].split('T')[0])
-        minfreq = self.FREQ.get(freqkey)[0]
+        ''' Calculate the frequency (= base frequency + channel * 1MHz)'''
+        # get base and maximum frequency
+        freqkey = self.config['model'].split('-')[1][:3]
+        basefreq = self.FREQ.get(freqkey)[1]
         maxfreq = self.FREQ.get(freqkey)[2]
+
         # calculate frequency
-        freq = minfreq + self.config['channel']
+        freq = basefreq + self.config['channel']
         if freq > maxfreq:
             self.config['frequency'] = maxfreq
-            self.config['channel'] = hex(maxfreq - minfreq)
+            self.config['channel'] = hex(int(maxfreq - freq))
+            print('Channel is over. set to maximum channel of frequency ')
         else:
             self.config['frequency'] = freq
 
@@ -509,7 +485,7 @@ class EbyteE220:
             self.setConfig('SetRegister')
 
     def setConfig(self, save_cmd):
-        ''' Set config parameters for the ebyte E32 LoRa module '''
+        ''' Set config parameters for the ebyte E220 LoRa module '''
         try:
             # send the command
             result = self.sendCommand(save_cmd)
