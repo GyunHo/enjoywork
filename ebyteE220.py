@@ -48,94 +48,130 @@
 #
 ######################################################################
 
-from machine import Pin, UART
-import utime
-import ujson
+# from machine import Pin, UART
+# import utime, ujson
+
+
+class UartSerialPortRate:
+    BAUDRATE_1200 = '000'
+    BAUDRATE_2400 = '001'
+    BAUDRATE_4800 = '010'
+    BAUDRATE_9600 = '011'
+    BAUDRATE_19200 = '100'
+    BAUDRATE_38400 = '101'
+    BAUDRATE_57600 = '110'
+    BAUDRATE_115200 = '111'
+
+
+class SerialParityBit:
+    SPB_8N1 = '00'
+    SPB_8O1 = '01'
+    SPB_8E1 = '10'
+
+
+class AirDataRate:
+    ADR_2_4k1 = '000'
+    ADR_2_4k2 = '001'
+    ADR_2_4k = '010'
+    ADR_4_8k = '011'
+    ADR_9_6k = '100'
+    ADR_19_2k = '101'
+    ADR_38_4k = '110'
+    ADR_62_5k = '111'
+
+
+class SubPacketSetting:
+    SPS_200bytes = '00'
+    SPS_128bytes = '01'
+    SPS_64bytes = '10'
+    SPS_32bytes = '11'
+
+
+class RSSI_AmbientNoiseEnable:
+    '''with REG1-4,3,2 Reserve'''
+    '''disalbe 0 or enable 1 + reserve 000 '''
+    RSSI_ANE_Disable = '0000'
+    RSSI_ANE_Enable = '1000'
+
+
+class TxPower30:
+    dBm30 = '00'
+    dBm27 = '01'
+    dBm24 = '10'
+    dBm21 = '11'
+
+
+class TxPower22:
+    dBm22 = '00'
+    dBm17 = '01'
+    dBm13 = '10'
+    dBm10 = '11'
+
+
+class EnableRSSIByte:
+    EnableRSSIByte_Disable = '0'
+    EnableRSSIByte_Enable = '1'
+
+
+class TxMethod:
+    '''with REG3-5 Reserve'''
+    '''disalbe 0 or enable 1 + reserve 0 '''
+    Transparent_transmission_mode = '00'
+    Fixed_transmission_mode = '01'
+
+
+class LBTEnable:
+    '''with REG3-3 Reserve'''
+    '''disalbe 0 or enable 1 + reserve 0 '''
+    LBT_Disable = '00'
+    LBT_Enable = '01'
+
+
+class WORCycle:
+    WOR_500ms = '000'
+    WOR_1000ms = '001'
+    WOR_1500ms = '010'
+    WOR_2000ms = '011'
+    WOR_2500ms = '100'
+    WOR_3000ms = '101'
+    WOR_3500ms = '110'
+    WOR_4000ms = '111'
 
 
 class EbyteE220:
-    ''' class to interface an ESP32 via serial commands to the EBYTE E220 Series LoRa modules '''
 
-    # UART ports
-    PORT = {'U1': 1, 'U2': 2}
-    REGLEN = 0x08
+    def __init__(self, pinM0, pinM1, pinAUX, model='E220-900T22D', port='U1',debug=False):
+        self.models = ['E220-400T22S', 'E220-400T30S', 'E220-900T22S', 'E220-900T30S',
+                       'E220-400T22D', 'E220-400T30D', 'E220-900T22D', 'E220-900T30D']
 
-    '''REG0'''
-    # UART Serial Port Rate(bps) /baudrate, 02H : 7-6-5
-    BAUDRATE = {1200: '000', 2400: '001', 4800: '010', 9600: '011',
-                19200: '100', 38400: '101', 57600: '110', 115200: '111'}
-    # UART Serial Parity Bit(bps), 02H : 4-3
-    PARSTR = {'8N1': '00', '8O1': '01', '8E1': '10'}
-    PARBIT = {'N': None, 'E': 0, 'O': 1}
-    # LoRa Air Data Rate(bps), 02H : 2-1-0
-    AIRDATARATE = {'2.4k': '010', '4.8k': '011', '9.6k': '100', '19.2k': '101', '38.4k': '110', '62.5k': '111'}
-
-    '''REG1'''
-    # LoRa Sub-Packet Setting, 03H : 7-6
-    SUBPACK = {'200bytes': '00', '128bytes': '01', '64bytes': '10', '32bytes': '11'}
-    # LoRa RSSI Ambient noise enable, 03H : 5
-    RSSIAMBIENT = {'disable': '0', 'enable': '1'}
-    # Reg1 Reserve, 03H : 4-3-2
-    REG1_432 = '000'
-    # LoRa Transmitting Power, 03H : 1-0
-    TXPOWER = {'22': {'22dbm': '00', '17dbm': '01', '13dbm': '10', '10dbm': '11'},
-               '30': {'30dbm': '00', '27dbm': '01', '24dbm': '10', '21dbm': '11'}}
-
-    '''REG3'''
-    # LoRa Enable RSSI Byte, 05H : 7
-    ENRSSI = {'disable': '0', 'enable': '1'}
-    # LoRa Transmission Method, 05H : 6
-    TRMODE = {'transparent': '0', 'fixed': '1'}
-    # Reg3 Reserve, 05H : 5
-    REG3_5 = '0'
-    # LoRa LBT Enable, 05H : 4
-    LBT = {'disable': '0', 'enable': '1'}
-    # LoRa Transmitting Power, 05H : 3
-    REG3_3 = '0'
-    # LoRa WOr Cycle, 05H : 2-1-0
-    WORCLYCLE = {'500ms': '000', '1000ms': '001', '1500ms': '010', '2000ms': '011',
-                 '2500ms': '100', '3000ms': '101', '3500ms': '110', '4000ms': '111'}
-
-    # Configuration Head Commands
-    CONFIGCMDS = {'SetRegister': 0xC0,
-                  'GetRegister': 0xC1,
-                  'SetTempRegister': 0xC2}
-
-    # operation modes (set with M0 & M1)
-    OPERMODE = {'TxRx': '00', 'WORtx': '01', 'WORrx': '10', 'DeepSleep': '11'}
-
-    # model frequency ranges (MHz)
-    KR_FREQ = [920.9, 923.3]
-    FREQ = {'400': [410, 410.125, 493.125], '900': [850, 850.125, 930.125]}
-
-    # transmission mode
-    TRANSMODE = {0: 'transparent', 1: 'fixed'}
-
-    # IO drive mode
-    IOMODE = {0: 'TXD AUX floating output, RXD floating input',
-              1: 'TXD AUX push-pull output, RXD pull-up input'}
-    # wireless wakeup times from sleep mode
-    WUTIME = {0b000: '250ms', 0b001: '500ms', 0b010: '750ms', 0b011: '1000ms',
-              0b100: '1250ms', 0b101: '1500ms', 0b110: '1750ms', 0b111: '2000ms'}
-    # Forward Error Correction (FEC) mode
-    FEC = {0: 'off', 1: 'on'}
-
-    def __init__(self, pinm0, pinm1, pinaux, model='E220-900T22D', port='U1', baudrate=9600, parity='8N1',
-                 airdatarate='2.4k', address=0x0000, channel=0x48, debug=False):
         ''' constructor for ebyte E32 LoRa module '''
         # configuration in dictionary
         self.config = {}
         self.config['model'] = model
-        self.validmodel(model)  # E220 model valid (default E220-900T22D)
+        if model not in self.models:
+            print('Unknown model name!')
+            print('Set default model : E220-900T22D')
+            self.config['model'] = self.models[6]
         self.config['port'] = port  # UART channel on the ESP32 (default U1)
-        self.config['baudrate'] = baudrate  # UART baudrate (default 9600)
-        self.config['parity'] = parity  # UART Parity (default 8N1)
-        self.config['datarate'] = airdatarate  # wireless baudrate (default 2.4k)
-        self.config['address'] = address  # target address (default 0x0000)
-        self.config['channel'] = channel  # target channel (default 0x48 for Korea)
+
+        '''ADDH'''
+        self.config['addh'] = '00'  # ADDH (default 00)
+
+        '''ADDL'''
+        self.config['addl'] = '00'  # ADDL (default 00)
+
+        '''REG0'''
+        self.config['baud_rate'] = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
+        self.config['parity'] = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
+        self.config['air_data_rate'] = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
+
+        '''REG1'''
+        self.config['sub_packet'] = SubPacketSetting.SPS_200bytes
+        self.config['RSSI_ambient_noise'] = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
+        self.config['channel'] = 0x48  # target channel (default 0x48 for Korea)
         self.calcFrequency()  # calculate frequency (min frequency + channel*1 MHz)
         self.config['transmode'] = 0  # transmission mode (default 0 - tranparent)
-        self.config['worchcle'] = '500ms'  # wakeup time from sleep mode (default 0 = 250ms)
+        self.config['worcycle'] = '500ms'  # wakeup time from sleep mode (default 0 = 500ms)
         self.config['txpower'] = '00'  # transmission power (default 22dBm)
         self.PinM0 = pinm0  # M0 pin number
         self.PinM1 = pinm1  # M1 pin number
@@ -384,7 +420,7 @@ class EbyteE220:
         self.config['txpower'] = int(bits[6:])
 
     def encodeConfig(self, headercommand):
-        ''' encode the config dictionary to create the config message of the ebyte E32 LoRa module '''
+        ''' encode the config dictionary to create the config message of the ebyte E220 LoRa module '''
         # Initialize config message
         message = []
         # message byte 0 = header
