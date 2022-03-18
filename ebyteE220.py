@@ -1,55 +1,33 @@
-# +---------------------------------------------+
-# | 0 - M0  (set mode)        [*]               |
-# | 0 - M1  (set mode)        [*]               |
-# | 0 - RXD (TTL UART input)  [*]               |
-# | 0 - TXD (TTL UART output) [*]               |
-# | 0 - AUX (device status)   [*]               |
-# | 0 - VCC (3.3-5.2V)                          +---+
-# | 0 - GND (GND)                                SMA| Antenna
-# +-------------------------------------------------+
-#     [*] ALL COMMUNICATION PINS ARE 3.3V !!!
-# Transmission modes :
-# ==================
-#   - Transparent : all modules have the same address and channel and
-#        can send/receive messages to/from each other. No address and
-#        channel is included in the message.
-#
-#   - Fixed : all modules can have different addresses and channels.
-#        The transmission messages are prefixed with the destination address
-#        and channel information. If these differ from the settings of the
-#        transmitter, then the configuration of the module will be changed
-#        before the transmission. After the transmission is complete,
-#        the transmitter will revert to its prior configuration.
-#
-#        1. Fixed P2P : The transmitted message has the address and channel
-#           information of the receiver. Only this module will receive the message.
-#           This is a point to point transmission between 2 modules.
-#
-#        2. Fixed Broadcast : The transmitted message has address FFFF and a
-#           channel. All modules with any address and the same channel of
-#           the message will receive it.
-#
-#        3. Fixed Monitor : The receiver has adress FFFF and a channel.
-#           It will receive messages from all modules with any address and
-#           the same channel as the receiver.
-#
-# Operating modes :
-# ===============
-#   - Mode0 = Normal (M0=0,M1=0) : UART and LoRa radio are on.
-#
-#   - Mode1 = WOR sending mode (M0=1,M1=0) : Same as normal but When defined as a transmitting party,
-#             preamble is automatically added before transmitting.
-#
-#   - Mode2 = WOR receiving mode (M0=0,M1=1) : Wireless transmission off,
-#             Can only receive data in WOR transmission(mode 1)
-#
-#   - Mode3 = Deep Sleep (M0=1,M1=1) : UART is on, LoRa radio is off. Is used to
-#             get/set module parameters or to reset the module.
-#
-######################################################################
+from machine import Pin, UART
+import utime, ujson
 
-# from machine import Pin, UART
-# import utime, ujson
+
+def flatten(B):
+    A = []
+    for i in B:
+        if type(i) == list:
+            A.extend(i)
+        else:
+            A.append(i)
+    return A
+
+
+def combination(lists):
+    outlist = []
+    templist = [[]]
+    for sublist in lists:
+        outlist = templist
+        templist = [[]]
+        for sitem in sublist:
+            for oitem in outlist:
+                newitem = [oitem]
+                if newitem == [[]]:
+                    newitem = [sitem]
+                else:
+                    newitem = [newitem[0], sitem]
+                templist.append(flatten(newitem))
+    outlist = list(filter(lambda x: len(x) == len(lists), templist))
+    return outlist
 
 
 class UartSerialPortRate:
@@ -138,77 +116,95 @@ class WORCycle:
     WOR_4000ms = '111'
 
 
-class EbyteE220:
+class ebyteE220:
+    TXPOWER = {'22': TxPower22, '30': TxPower30}
+    MODELS = ['E220-400T22S', 'E220-400T30S', 'E220-900T22S', 'E220-900T30S',
+              'E220-400T22D', 'E220-400T30D', 'E220-900T22D', 'E220-900T30D']
+    OPERATION_MODE = {'TxRx': '00', 'WORTx': '01', 'WORRx': '10', 'DeepSleep': '11'}
 
-    def __init__(self, pinM0, pinM1, pinAUX, model='E220-900T22D', port='U1',debug=False):
-        self.models = ['E220-400T22S', 'E220-400T30S', 'E220-900T22S', 'E220-900T30S',
-                       'E220-400T22D', 'E220-400T30D', 'E220-900T22D', 'E220-900T30D']
+    def __init__(self, pinM0, pinM1, pinAUX, address=0x0000, channel=71, model='E220-900T22D', uart_port=1,
+                 debug=False):
+        self.PinM0 = pinM0  # M0 pin number
+        self.PinM1 = pinM1  # M1 pin number
+        self.PinAUX = pinAUX  # AUX pin number
+        self.PinTX = 4
+        self.PinRX = 5
+        self.M0 = Pin(pinM0, Pin.OUT)  # instance for M0 Pin (set operation mode)
+        self.M1 = Pin(pinM1, Pin.OUT)  # instance for M1 Pin (set operation mode)
+        self.AUX = Pin(pinAUX, Pin.IN, Pin.PULL_UP)  # instance for AUX Pin (device status : 0=busy, 1=idle)
+        self.device = None  # instance for UART
+        self.debug = debug
 
-        ''' constructor for ebyte E32 LoRa module '''
-        # configuration in dictionary
-        self.config = {}
-        self.config['model'] = model
-        if model not in self.models:
+        self.model = model
+        if model not in self.MODELS:
             print('Unknown model name!')
             print('Set default model : E220-900T22D')
-            self.config['model'] = self.models[6]
-        self.config['port'] = port  # UART channel on the ESP32 (default U1)
+            self.model = self.MODELS[6]
+        self.uart_port = uart_port  # UART channel(default U1)
+        self.address = address
 
         '''ADDH'''
-        self.config['addh'] = '00'  # ADDH (default 00)
+        self.addh = self.address // 256  # ADDH (default 00)
 
         '''ADDL'''
-        self.config['addl'] = '00'  # ADDL (default 00)
+        self.addl = self.address % 256  # ADDL (default 00)
 
         '''REG0'''
-        self.config['baud_rate'] = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
-        self.config['parity'] = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
-        self.config['air_data_rate'] = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
+        self.reg0_index, reg0_len = 5, 8
+        self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
+        self.parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
+        self.air_data_rate = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
 
         '''REG1'''
-        self.config['sub_packet'] = SubPacketSetting.SPS_200bytes
-        self.config['RSSI_ambient_noise'] = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
-        self.config['channel'] = 0x48  # target channel (default 0x48 for Korea)
-        self.calcFrequency()  # calculate frequency (min frequency + channel*1 MHz)
-        self.config['transmode'] = 0  # transmission mode (default 0 - tranparent)
-        self.config['worcycle'] = '500ms'  # wakeup time from sleep mode (default 0 = 500ms)
-        self.config['txpower'] = '00'  # transmission power (default 22dBm)
-        self.PinM0 = pinm0  # M0 pin number
-        self.PinM1 = pinm1  # M1 pin number
-        self.PinAUX = pinaux  # AUX pin number
-        self.M0 = None  # instance for M0 Pin (set operation mode)
-        self.M1 = None  # instance for M1 Pin (set operation mode)
-        self.AUX = None  # instance for AUX Pin (device status : 0=busy, 1=idle)
-        self.serdev = None  # instance for UART
-        self.debug = debug
+        self.reg1_index, reg1_len = 6, 8
+        self.sub_packet_setting = SubPacketSetting.SPS_200bytes
+        self.RSSI_ambient_noise = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
+        self.transmitting_power = TxPower22.dBm22
+
+        '''REG2'''
+        self.channel = channel  # target channel (default (base 850Mhz) + channel 71Mhz = 921Mhz for Korea)
+
+        '''REG3'''
+        self.reg3_index, reg3_len = 8, 8
+        self.enable_rssi_byte = EnableRSSIByte.EnableRSSIByte_Disable  # default disable
+        self.transmission_method = TxMethod.Transparent_transmission_mode  # transmission mode (default 0 - tranparent)
+        self.worcycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
+
+    def set_operation_mode(self, mode):
+        bits = ebyteE220.OPERATION_MODE.get(mode)
+        self.M0.value(int(bits[0]))
+        self.M1.value(int(bits[1]))
+        utime.sleep_ms(50)
+        if self.debug:
+            print('change mode -> ' + mode)
+
+    def decode_res(self, response):
+        if len(response) < 10 or 0xc1 not in response:
+            return False
+        else:
+            resp = []
+            for i in response:
+                resp.append(i)
+            c1_index = resp.index(0xc1)
+            result = resp[c1_index:]
+            return result
+
+    def get_configuration(self):
+        self.set_operation_mode('DeepSleep')
+        cmd = [0xc0, 0x00, 0x06]
+
+        pass
 
     def start(self):
         ''' Start the ebyte E220 LoRa module '''
         try:
-            # check parameters
-            if self.config['port'] not in self.PORT:
-                self.config['port'] = 'U1'
-            if int(self.config['baudrate']) not in self.BAUDRATE:
-                self.config['baudrate'] = 9600
-            if self.config['parity'] not in self.PARSTR:
-                self.config['parity'] = '8N1'
-            if self.config['datarate'] not in self.AIRDATARATE:
-                self.config['datarate'] = '2.4k'
-            # make UART instance
-            self.serdev = UART(self.PORT.get(self.config['port']))
-            # init UART
-            par = self.PARBIT.get(str(self.config['parity'])[1])
-            self.serdev.init(baudrate=self.config['baudrate'], bits=8, parity=par, stop=1)
+            self.device = UART(self.uart_port, baudrate=9600, parity=None, tx=Pin(self.PinTX), rx=Pin(self.PinRX),
+                               bits=8)
             if self.debug:
-                print(self.serdev)
-            # make operation mode & device status instances
-            self.M0 = Pin(self.PinM0, Pin.OUT)
-            self.M1 = Pin(self.PinM1, Pin.OUT)
-            self.AUX = Pin(self.PinAUX, Pin.IN, Pin.PULL_UP)
-            if self.debug:
+                print(self.device)
                 print(self.M0, self.M1, self.AUX)
-            # set config to the ebyte E32 LoRa module
-            self.setConfig('SetRegister')
+
+            # self.setConfig('SetRegister')
             return "OK"
 
         except Exception as E:
@@ -320,32 +316,6 @@ class EbyteE220:
             the lower byte of the two's complement of that value in hex notation. '''
         return '%2X' % (-(sum(ord(c) for c in payload) % 256) & 0xFF)
 
-    def reset(self):
-        ''' Reset the ebyte E32 Lora module '''
-        try:
-            # send the command
-            res = self.sendCommand('reset')
-            # discard result
-            return "OK"
-
-        except Exception as E:
-            if self.debug:
-                print("error on reset", E)
-            return "NOK"
-
-    def stop(self):
-        ''' Stop the ebyte E32 LoRa module '''
-        try:
-            if self.serdev != None:
-                self.serdev.deinit()
-                del self.serdev
-            return "OK"
-
-        except Exception as E:
-            if self.debug:
-                print("error on stop UART", E)
-            return "NOK"
-
     def sendCommand(self, configcommand):
         ''' Send a command to the ebyte E32 LoRa module.
             The module has to be in sleep mode '''
@@ -380,8 +350,8 @@ class EbyteE220:
             return "NOK"
 
     def getConfig(self):
-        ''' Get config parameters from the ebyte E32 LoRa module '''
         try:
+            self.setOperationMode('DeepSleep')
             # send the command
             result = self.sendCommand('GetRegister')
             # check result
@@ -498,22 +468,6 @@ class EbyteE220:
         else:
             self.config['model'] = 'E220-900T22D'
 
-    def calcFrequency(self):
-        ''' Calculate the frequency (= base frequency + channel * 1MHz)'''
-        # get base and maximum frequency
-        freqkey = self.config['model'].split('-')[1][:3]
-        basefreq = self.FREQ.get(freqkey)[1]
-        maxfreq = self.FREQ.get(freqkey)[2]
-
-        # calculate frequency
-        freq = basefreq + self.config['channel']
-        if freq > maxfreq:
-            self.config['frequency'] = maxfreq
-            self.config['channel'] = hex(int(maxfreq - freq))
-            print('Channel is over. set to maximum channel of frequency ')
-        else:
-            self.config['frequency'] = freq
-
     def setTransmissionMode(self, transmode):
         ''' Set the transmission mode of the E32 LoRa module '''
         if transmode != self.config['transmode']:
@@ -542,13 +496,3 @@ class EbyteE220:
             if self.debug:
                 print('Error on setConfig: ', E)
             return "NOK"
-
-    def setOperationMode(self, mode):
-        ''' Set operation mode of the E220 LoRa module '''
-        # get operation mode settings (default TxRx)
-        bits = self.OPERMODE.get(mode, '00')
-        # set operation mode
-        self.M0.value(int(bits[0]))
-        self.M1.value(int(bits[1]))
-        # wait a moment
-        utime.sleep_ms(50)
