@@ -45,6 +45,7 @@ class SerialParityBit:
     SPB_8N1 = '00'
     SPB_8O1 = '01'
     SPB_8E1 = '10'
+    SPB_8N1_ = '11'
 
 
 class AirDataRate:
@@ -121,6 +122,9 @@ class ebyteE220:
     MODELS = ['E220-400T22S', 'E220-400T30S', 'E220-900T22S', 'E220-900T30S',
               'E220-400T22D', 'E220-400T30D', 'E220-900T22D', 'E220-900T30D']
     OPERATION_MODE = {'TxRx': '00', 'WORTx': '01', 'WORRx': '10', 'DeepSleep': '11'}
+    BAUD_RATE = {'000': 1200, '001': 2400, '010': 4800, '011': 9600, '100': 19200, '101': 38400, '110': 57600,
+                 '111': 115200}
+    PARITY = {'00': None, '01': 1, '10': 0, '11': None}
 
     def __init__(self, pinM0, pinM1, pinAUX, address=0x0000, channel=71, model='E220-900T22D', uart_port=1,
                  debug=False):
@@ -139,7 +143,7 @@ class ebyteE220:
         if model not in self.MODELS:
             print('Unknown model name!')
             print('Set default model : E220-900T22D')
-            self.model = self.MODELS[6]
+            self.model = 'E220-900T22D'
         self.uart_port = uart_port  # UART channel(default U1)
         self.address = address
 
@@ -152,13 +156,13 @@ class ebyteE220:
         '''REG0'''
         self.reg0_index, reg0_len = 5, 8
         self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
-        self.parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
+        self.serial_parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
         self.air_data_rate = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
 
         '''REG1'''
         self.reg1_index, reg1_len = 6, 8
         self.sub_packet_setting = SubPacketSetting.SPS_200bytes
-        self.RSSI_ambient_noise = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
+        self.rssi_ambient_noise = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
         self.transmitting_power = TxPower22.dBm22
 
         '''REG2'''
@@ -168,37 +172,13 @@ class ebyteE220:
         self.reg3_index, reg3_len = 8, 8
         self.enable_rssi_byte = EnableRSSIByte.EnableRSSIByte_Disable  # default disable
         self.transmission_method = TxMethod.Transparent_transmission_mode  # transmission mode (default 0 - tranparent)
-        self.worcycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
-
-    def set_operation_mode(self, mode):
-        bits = ebyteE220.OPERATION_MODE.get(mode)
-        self.M0.value(int(bits[0]))
-        self.M1.value(int(bits[1]))
-        utime.sleep_ms(50)
-        if self.debug:
-            print('change mode -> ' + mode)
-
-    def decode_res(self, response):
-        if len(response) < 10 or 0xc1 not in response:
-            return False
-        else:
-            resp = []
-            for i in response:
-                resp.append(i)
-            c1_index = resp.index(0xc1)
-            result = resp[c1_index:]
-            return result
-
-    def get_configuration(self):
-        self.set_operation_mode('DeepSleep')
-        cmd = [0xc0, 0x00, 0x06]
-
-        pass
+        self.lbt_enable = LBTEnable.LBT_Disable  # default disable
+        self.wor_cycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
 
     def start(self):
-        ''' Start the ebyte E220 LoRa module '''
         try:
-            self.device = UART(self.uart_port, baudrate=9600, parity=None, tx=Pin(self.PinTX), rx=Pin(self.PinRX),
+            self.device = UART(self.uart_port, baudrate=self.BAUD_RATE[self.lora_baud_rate],
+                               parity=self.PARITY[self.serial_parity], tx=Pin(self.PinTX), rx=Pin(self.PinRX),
                                bits=8)
             if self.debug:
                 print(self.device)
@@ -211,6 +191,64 @@ class ebyteE220:
             if self.debug:
                 print("error on start UART", E)
             return "NOK"
+
+    def set_operation_mode(self, mode):
+        bits = ebyteE220.OPERATION_MODE.get(mode)
+        self.M0.value(int(bits[0]))
+        self.M1.value(int(bits[1]))
+        utime.sleep_ms(50)
+        if self.debug:
+            print('change mode -> ' + mode)
+
+    def decode_res(self, response):
+        if len(response) < 9 or 0xc1 not in response:
+            return False
+        else:
+            resp = []
+            for i in response:
+                resp.append(i)
+            c1_index = resp.index(0xc1)
+            result = resp[c1_index:]
+            return result
+
+    def wait_idle(self):
+        count = 0
+        while not self.AUX.value():
+            count += 1
+            if count == 10:
+                break
+            utime.sleep_ms(10)
+
+    def get_config(self):
+        try:
+            self.set_operation_mode('DeepSleep')
+            self.wait_idle()
+            cmd = [0xc1, 0x00, 0x06]
+            self.device.write(bytes(cmd))
+            utime.sleep_ms(100)
+            res = self.decode_res(self.device.read())
+            if self.debug:
+                print(f'get configuration -> {res}')
+            return res
+        except Exception as E:
+            if self.debug:
+                print(f'get configuration error -> {E}')
+            return False
+
+    def encode_set_cmd(self):
+        command = [0xc0, 0x00, 0x06, self.addh, self.addl]
+        reg0 = [self.lora_baud_rate, self.serial_parity, self.air_data_rate]
+        reg1 = [self.sub_packet_setting, self.rssi_ambient_noise, self.transmitting_power]
+        reg2 = self.channel
+        reg3 = [self.enable_rssi_byte, self.transmission_method, self.lbt_enable, self.wor_cycle]
+        command.append(int('0b' + ''.join(reg0)))
+        command.append(int('0b' + ''.join(reg1)))
+        command.append(reg2)
+        command.append(int('0b' + ''.join(reg3)))
+        return command
+
+    def decode_cmd(self,res):
+        pass
 
     def sendMessage(self, to_address, to_channel, payload, useChecksum=False):
         ''' Send the payload to ebyte E32 LoRa modules in transparent or fixed mode. The payload is a data dictionary to
