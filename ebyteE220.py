@@ -184,13 +184,20 @@ class ebyteE220:
                 print(self.device)
                 print(self.M0, self.M1, self.AUX)
 
-            # self.setConfig('SetRegister')
             return "OK"
 
         except Exception as E:
             if self.debug:
                 print("error on start UART", E)
             return "NOK"
+
+    def wait_idle(self):
+        count = 0
+        while not self.AUX.value():
+            count += 1
+            if count == 10:
+                break
+            utime.sleep_ms(10)
 
     def set_operation_mode(self, mode):
         bits = ebyteE220.OPERATION_MODE.get(mode)
@@ -211,31 +218,7 @@ class ebyteE220:
             result = resp[c1_index:]
             return result
 
-    def wait_idle(self):
-        count = 0
-        while not self.AUX.value():
-            count += 1
-            if count == 10:
-                break
-            utime.sleep_ms(10)
-
-    def get_config(self):
-        try:
-            self.set_operation_mode('DeepSleep')
-            self.wait_idle()
-            cmd = [0xc1, 0x00, 0x06]
-            self.device.write(bytes(cmd))
-            utime.sleep_ms(100)
-            res = self.decode_res(self.device.read())
-            if self.debug:
-                print(f'get configuration -> {res}')
-            return res
-        except Exception as E:
-            if self.debug:
-                print(f'get configuration error -> {E}')
-            return False
-
-    def encode_set_cmd(self):
+    def encode_cmd(self):
         command = [0xc0, 0x00, 0x06, self.addh, self.addl]
         reg0 = [self.lora_baud_rate, self.serial_parity, self.air_data_rate]
         reg1 = [self.sub_packet_setting, self.rssi_ambient_noise, self.transmitting_power]
@@ -247,10 +230,56 @@ class ebyteE220:
         command.append(int('0b' + ''.join(reg3)))
         return command
 
-    def decode_cmd(self,res):
+    def decode_cmd(self, res):
         pass
 
+    def send_cmd(self, cmd: list):
+        try:
+            self.set_operation_mode('DeepSleep')
+            self.wait_idle()
+            self.device.write(bytes(cmd))
+            utime.sleep_ms(50)
+            res = self.decode_res(self.device.read())
+            if self.debug:
+                print(f'sending command -> {cmd}')
+                print(f'result of sending command -> {res}')
+            return res
+        except Exception as E:
+            if self.debug:
+                print(f'sending command error -> {E}')
+            return False
+
+    def get_config(self):
+        read_reg_cmd = [0xc1, 0x00, 0x06]
+        res = self.send_cmd(read_reg_cmd)
+        if not res:
+            return 'get config error'
+        else:
+            return res
+
+    def set_add(self, add: int):
+        self.addh = add // 256
+        self.addl = add % 256
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set address error'
+        else:
+            return self.get_config()
+
+    def set_channel(self, ch: int):
+        self.channel = ch
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set channel error'
+        else:
+            conf = self.get_config()
+            if ch > conf[7]:
+                print(f'maximum channel for this module is {conf[7]}')
+                print(f'channel set {conf[7]}')
+            return self.get_config()
+
     def sendMessage(self, to_address, to_channel, payload, useChecksum=False):
+
         ''' Send the payload to ebyte E32 LoRa modules in transparent or fixed mode. The payload is a data dictionary to
             accomodate key value pairs commonly used to store sensor data and is converted to a JSON string before sending.
             The payload can be appended with a 2's complement checksum to validate correct transmission.
