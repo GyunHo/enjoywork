@@ -126,19 +126,20 @@ class ebyteE220:
                  '111': 115200}
     PARITY = {'00': None, '01': 1, '10': 0, '11': None}
 
-    def __init__(self, pinM0, pinM1, pinAUX, address=0x0000, channel=71, model='E220-900T22D', uart_port=1,
-                 debug=False):
-        self.PinM0 = pinM0  # M0 pin number
-        self.PinM1 = pinM1  # M1 pin number
-        self.PinAUX = pinAUX  # AUX pin number
-        self.PinTX = 4
-        self.PinRX = 5
-        self.M0 = Pin(pinM0, Pin.OUT)  # instance for M0 Pin (set operation mode)
-        self.M1 = Pin(pinM1, Pin.OUT)  # instance for M1 Pin (set operation mode)
-        self.AUX = Pin(pinAUX, Pin.IN, Pin.PULL_UP)  # instance for AUX Pin (device status : 0=busy, 1=idle)
+    def __init__(self, m0, m1, aux, address=0x0000, channel=71, model='E220-900T22D', uart_port=1,
+                 tx=4, rx=5, debug=False):
+        self.PinM0 = m0  # M0 pin number
+        self.PinM1 = m1  # M1 pin number
+        self.PinAUX = aux  # AUX pin number
+        self.PinTX = tx
+        self.PinRX = rx
+        self.M0 = Pin(self.PinM0, Pin.OUT, value=0)  # M0 Pin for set operation mode
+        self.M1 = Pin(self.PinM1, Pin.OUT, value=0)  # M1 Pin for set operation mode
+        self.AUX = Pin(self.PinAUX, Pin.IN, Pin.PULL_UP)  # AUX Pin for device status (device status : 0=busy, 1=idle)
         self.device = None  # instance for UART
         self.debug = debug
 
+        self.serial_baud_rate = 9600
         self.model = model
         if model not in self.MODELS:
             print('Unknown model name!')
@@ -154,13 +155,13 @@ class ebyteE220:
         self.addl = self.address % 256  # ADDL (default 00)
 
         '''REG0'''
-        self.reg0_index, reg0_len = 5, 8
+        self.reg0_index = 5
         self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
         self.serial_parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
         self.air_data_rate = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
 
         '''REG1'''
-        self.reg1_index, reg1_len = 6, 8
+        self.reg1_index = 6
         self.sub_packet_setting = SubPacketSetting.SPS_200bytes
         self.rssi_ambient_noise = RSSI_AmbientNoiseEnable.RSSI_ANE_Disable  # RSSI Ambient noise (default disable)
         self.transmitting_power = TxPower22.dBm22
@@ -169,45 +170,55 @@ class ebyteE220:
         self.channel = channel  # target channel (default (base 850Mhz) + channel 71Mhz = 921Mhz for Korea)
 
         '''REG3'''
-        self.reg3_index, reg3_len = 8, 8
+        self.reg3_index = 8
         self.enable_rssi_byte = EnableRSSIByte.EnableRSSIByte_Disable  # default disable
         self.transmission_method = TxMethod.Transparent_transmission_mode  # transmission mode (default 0 - tranparent)
         self.lbt_enable = LBTEnable.LBT_Disable  # default disable
         self.wor_cycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
 
-    def start(self):
+    def __start(self):
         try:
-            self.device = UART(self.uart_port, baudrate=self.BAUD_RATE[self.lora_baud_rate],
+            self.device = UART(self.uart_port, baudrate=self.serial_baud_rate,
                                parity=self.PARITY[self.serial_parity], tx=Pin(self.PinTX), rx=Pin(self.PinRX),
                                bits=8)
             if self.debug:
                 print(self.device)
-                print(self.M0, self.M1, self.AUX)
-
-            return "OK"
+            return "UART START OK"
 
         except Exception as E:
             if self.debug:
                 print("error on start UART", E)
-            return "NOK"
+            return "UART START NOK"
 
-    def wait_idle(self):
+    def __set_cmd_mode(self):
+        try:
+            self.device = UART(self.uart_port, baudrate=9600,
+                               parity=None, tx=Pin(self.PinTX), rx=Pin(self.PinRX),
+                               bits=8)
+            if self.debug:
+                print(self.device)
+            return "Enter command setting mode"
+        except Exception as e:
+            return "Error entering command setting mode"
+
+    def __wait_idle(self):
+        utime.sleep_ms(50)
         count = 0
         while not self.AUX.value():
-            count += 1
-            if count == 10:
+            if count > 10:
                 break
-            utime.sleep_ms(10)
+            count += 1
+            utime.sleep_ms(50)
 
-    def set_operation_mode(self, mode):
-        bits = ebyteE220.OPERATION_MODE.get(mode)
+    def __set_operation_mode(self, mode):
+        bits = ebyteE220.OPERATION_MODE.get(mode, '00')
         self.M0.value(int(bits[0]))
         self.M1.value(int(bits[1]))
-        utime.sleep_ms(50)
+        self.__wait_idle()
         if self.debug:
             print('change mode -> ' + mode)
 
-    def decode_res(self, response):
+    def decode_response(self, response):
         if len(response) < 9 or 0xc1 not in response:
             return False
         else:
@@ -235,11 +246,13 @@ class ebyteE220:
 
     def send_cmd(self, cmd: list):
         try:
-            self.set_operation_mode('DeepSleep')
-            self.wait_idle()
+            self.__set_operation_mode('DeepSleep')
+            print(self.__set_cmd_mode())
+            self.__wait_idle()
             self.device.write(bytes(cmd))
-            utime.sleep_ms(50)
-            res = self.decode_res(self.device.read())
+            self.__wait_idle()
+            res = self.decode_response(self.device.read())
+            print(self.__start())
             if self.debug:
                 print(f'sending command -> {cmd}')
                 print(f'result of sending command -> {res}')
@@ -266,6 +279,46 @@ class ebyteE220:
         else:
             return self.get_config()
 
+    def set_spr(self, rate):
+        self.lora_baud_rate = rate
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set spr error'
+        else:
+            return self.get_config()
+
+    def set_spb(self, parity):
+        self.serial_parity = parity
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set parity bit error'
+        else:
+            return self.get_config()
+
+    def set_adr(self, airdata):
+        self.air_data_rate = airdata
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set air data rate error'
+        else:
+            return self.get_config()
+
+    def set_sub_packet(self, packet):
+        self.sub_packet_setting = packet
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set sub-packet setting error'
+        else:
+            return self.get_config()
+
+    def set_tx_power(self, power):
+        self.transmitting_power = power
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set transmitting power error'
+        else:
+            return self.get_config()
+
     def set_channel(self, ch: int):
         self.channel = ch
         res = self.send_cmd(self.encode_cmd())
@@ -277,6 +330,53 @@ class ebyteE220:
                 print(f'maximum channel for this module is {conf[7]}')
                 print(f'channel set {conf[7]}')
             return self.get_config()
+
+    def set_trans_mode(self):
+        self.transmission_method = TxMethod.Transparent_transmission_mode
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set transparent transmission mode error'
+        else:
+            return self.get_config()
+
+    def set_fixed_mode(self):
+        self.transmission_method = TxMethod.Fixed_transmission_mode
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set fixed transmission mode error'
+        else:
+            return self.get_config()
+
+    def set_wor(self, cycle):
+        self.wor_cycle = cycle
+        res = self.send_cmd(self.encode_cmd())
+        if not res:
+            return 'set WOR cycle error'
+        else:
+            return self.get_config()
+
+    def tx(self, message, mode='TxRx'):
+        try:
+            self.__set_operation_mode(mode)
+            self.device.write(message)
+            if self.debug:
+                print(f'send massage -> {message}')
+            while not self.AUX.value():
+                print('SENDING.......')
+                utime.sleep_ms(100)
+            return 'SEND OK'
+        except Exception as E:
+            print(E)
+            return 'SEND FALSE'
+
+    def rx(self):
+        try:
+            self.__set_operation_mode('TxRx')
+            msg = self.device.read()
+            if msg:
+                return msg
+        except Exception as E:
+            print(E)
 
     def sendMessage(self, to_address, to_channel, payload, useChecksum=False):
 
