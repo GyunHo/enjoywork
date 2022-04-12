@@ -2,32 +2,15 @@ from machine import Pin, UART
 import utime, ujson
 
 
-def flatten(B):
-    A = []
-    for i in B:
-        if type(i) == list:
-            A.extend(i)
-        else:
-            A.append(i)
-    return A
-
-
-def combination(lists):
-    outlist = []
-    templist = [[]]
-    for sublist in lists:
-        outlist = templist
-        templist = [[]]
-        for sitem in sublist:
-            for oitem in outlist:
-                newitem = [oitem]
-                if newitem == [[]]:
-                    newitem = [sitem]
-                else:
-                    newitem = [newitem[0], sitem]
-                templist.append(flatten(newitem))
-    outlist = list(filter(lambda x: len(x) == len(lists), templist))
-    return outlist
+def itr_comb(array):
+    results = [[]]
+    for i in range(len(array)):
+        temp = []
+        for res in results:
+            for element in array[i]:
+                temp.append(res + [element])
+        results = temp
+    return results
 
 
 class UartSerialPortRate:
@@ -146,7 +129,7 @@ class ebyteE220:
             print('Set default model : E220-900T22D')
             self.model = 'E220-900T22D'
         self.uart_port = uart_port  # UART channel(default U1)
-        self.address = address
+        self.address = address  # Lora module address(default 0x0000)
 
         '''ADDH'''
         self.addh = self.address // 256  # ADDH (default 00)
@@ -159,6 +142,7 @@ class ebyteE220:
         self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
         self.serial_parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
         self.air_data_rate = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
+        self.reg0 = [UartSerialPortRate, SerialParityBit, AirDataRate]
 
         '''REG1'''
         self.reg1_index = 6
@@ -167,6 +151,7 @@ class ebyteE220:
         self.transmitting_power = TxPower22.dBm22
 
         '''REG2'''
+        self.reg1_index = 7
         self.channel = channel  # target channel (default (base 850Mhz) + channel 71Mhz = 921Mhz for Korea)
 
         '''REG3'''
@@ -175,6 +160,27 @@ class ebyteE220:
         self.transmission_method = TxMethod.Transparent_transmission_mode  # transmission mode (default 0 - tranparent)
         self.lbt_enable = LBTEnable.LBT_Disable  # default disable
         self.wor_cycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
+
+        print(self.__start())
+
+    def __cltodict(self, cl: list):
+        result = {}
+        temp_keys = []
+        temp_values = []
+        for c in cl:
+            keys = []
+            values = []
+            for k, v in c.__dict__.items():
+                if v.isdigit():
+                    keys.append(v)
+                    values.append(k)
+            temp_keys.append(keys)
+            temp_values.append(values)
+        r_k = itr_comb(temp_keys)
+        r_v = itr_comb(temp_values)
+        for i in range(len(r_k)):
+            result[''.join(r_k[i])] = r_v[i]
+        return result
 
     def __start(self):
         try:
@@ -198,7 +204,8 @@ class ebyteE220:
             if self.debug:
                 print(self.device)
             return "Enter command setting mode"
-        except Exception as e:
+        except Exception as E:
+            print(E)
             return "Error entering command setting mode"
 
     def __wait_idle(self):
@@ -242,17 +249,18 @@ class ebyteE220:
         return command
 
     def decode_cmd(self, res):
+
         pass
 
     def send_cmd(self, cmd: list):
         try:
             self.__set_operation_mode('DeepSleep')
-            print(self.__set_cmd_mode())
+            self.__set_cmd_mode()
             self.__wait_idle()
             self.device.write(bytes(cmd))
             self.__wait_idle()
             res = self.decode_response(self.device.read())
-            print(self.__start())
+            self.__start()
             if self.debug:
                 print(f'sending command -> {cmd}')
                 print(f'result of sending command -> {res}')
@@ -281,10 +289,16 @@ class ebyteE220:
 
     def set_spr(self, rate):
         self.lora_baud_rate = rate
+        if rate not in self.BAUD_RATE.keys():
+            self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600
+            print(f'input baud rate "{rate}"wrong ->set default 9600 ')
+        self.serial_baud_rate = self.BAUD_RATE.get(rate, 9600)
         res = self.send_cmd(self.encode_cmd())
         if not res:
             return 'set spr error'
         else:
+            print(f'set spr OK')
+            print(self.device)
             return self.get_config()
 
     def set_spb(self, parity):
@@ -319,7 +333,7 @@ class ebyteE220:
         else:
             return self.get_config()
 
-    def set_channel(self, ch: int):
+    def set_ch(self, ch: int):
         self.channel = ch
         res = self.send_cmd(self.encode_cmd())
         if not res:
@@ -369,10 +383,10 @@ class ebyteE220:
             print(E)
             return 'SEND FALSE'
 
-    def rx(self):
+    def rx(self, mode='TxRx'):
         try:
-            self.__set_operation_mode('TxRx')
-            msg = self.device.read()
+            self.__set_operation_mode(mode)
+            msg = self.device.read().strip(b'\x00')
             if msg:
                 return msg
         except Exception as E:
