@@ -111,6 +111,7 @@ class ebyteE220:
 
     def __init__(self, m0, m1, aux, address=0x0000, channel=71, model='E220-900T22D', uart_port=1,
                  tx=4, rx=5, debug=False):
+        self.mode = 'TxRx'
         self.PinM0 = m0  # M0 pin number
         self.PinM1 = m1  # M1 pin number
         self.PinAUX = aux  # AUX pin number
@@ -122,7 +123,6 @@ class ebyteE220:
         self.device = None  # instance for UART
         self.debug = debug
 
-        self.serial_baud_rate = 9600
         self.model = model
         if model not in self.MODELS:
             print('Unknown model name!')
@@ -139,7 +139,8 @@ class ebyteE220:
 
         '''REG0'''
         self.reg0_index = 5
-        self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600  # UART baudrate (default 9600)
+        self.lora_baud_rate = str('{0:08b}'.format(self.get_config()[self.reg0_index]))[
+                              :3]  # UART baudrate set from lora module config
         self.serial_parity = SerialParityBit.SPB_8N1  # UART Parity (default 8N1)
         self.air_data_rate = AirDataRate.ADR_2_4k  # wireless baudrate (default 2.4k)
         self.reg0 = [UartSerialPortRate, SerialParityBit, AirDataRate]
@@ -184,7 +185,7 @@ class ebyteE220:
 
     def __start(self):
         try:
-            self.device = UART(self.uart_port, baudrate=self.serial_baud_rate,
+            self.device = UART(self.uart_port, baudrate=self.BAUD_RATE.get(self.lora_baud_rate),
                                parity=self.PARITY[self.serial_parity], tx=Pin(self.PinTX), rx=Pin(self.PinRX),
                                bits=8)
             if self.debug:
@@ -292,7 +293,6 @@ class ebyteE220:
         if rate not in self.BAUD_RATE.keys():
             self.lora_baud_rate = UartSerialPortRate.BAUDRATE_9600
             print(f'input baud rate "{rate}"wrong ->set default 9600 ')
-        self.serial_baud_rate = self.BAUD_RATE.get(rate, 9600)
         res = self.send_cmd(self.encode_cmd())
         if not res:
             return 'set spr error'
@@ -371,7 +371,11 @@ class ebyteE220:
 
     def tx(self, message, mode='TxRx'):
         try:
-            self.__set_operation_mode(mode)
+            om = str(self.M0.value()) + str(self.M1.value())
+            if om != self.OPERATION_MODE.get(mode):
+                self.mode = mode
+                self.__set_operation_mode(self.mode)
+                self.__wait_idle()
             self.device.write(message)
             if self.debug:
                 print(f'send massage -> {message}')
@@ -385,12 +389,19 @@ class ebyteE220:
 
     def rx(self, mode='TxRx'):
         try:
-            self.__set_operation_mode(mode)
-            msg = self.device.read().strip(b'\x00')
-            if msg:
-                return msg
+            om = str(self.M0.value()) + str(self.M1.value())
+            if om != self.OPERATION_MODE.get(mode):
+                self.mode = mode
+                self.__set_operation_mode(self.mode)
+                self.__wait_idle()
+            res = self.device.read()
+            if res:
+                msg = res.strip(b'\x00')
+                if msg:
+                    return msg
         except Exception as E:
             print(E)
+            return 'RECEIVE FAIL'
 
     def sendMessage(self, to_address, to_channel, payload, useChecksum=False):
 
