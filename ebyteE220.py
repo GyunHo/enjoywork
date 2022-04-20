@@ -160,7 +160,7 @@ class ebyteE220:
         '''REG3'''
         self.reg3_index = 8
         self.enable_rssi_byte = EnableRSSIByte.EnableRSSIByte_Disable  # default disable
-        self.transmission_method = TxMethod.Transparent_transmission_mode  # transmission mode (default 0 - tranparent)
+        self.transmission_method = TxMethod.Transparent_mode  # transmission mode (default 0 - tranparent)
         self.lbt_enable = LBTEnable.LBT_Disable  # default disable
         self.wor_cycle = WORCycle.WOR_500ms  # wakeup time from sleep mode (default 0 = 500ms)
 
@@ -384,7 +384,7 @@ class ebyteE220:
             return 'OK'
 
     def set_trans_mode(self):
-        self.transmission_method = TxMethod.Transparent_transmission_mode
+        self.transmission_method = TxMethod.Transparent_mode
         res = self.send_cmd(self.encode_cmd())
         if not res:
             return 'set transparent transmission mode error'
@@ -392,7 +392,7 @@ class ebyteE220:
             return 'OK'
 
     def set_fixed_mode(self):
-        self.transmission_method = TxMethod.Fixed_transmission_mode
+        self.transmission_method = TxMethod.Fixed_mode
         res = self.send_cmd(self.encode_cmd())
         if not res:
             return 'set fixed transmission mode error'
