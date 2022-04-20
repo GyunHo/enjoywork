@@ -324,7 +324,7 @@ class ebyteE220:
         if not res:
             return 'set address error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_spr(self, rate):
         self.lora_baud_rate = rate
@@ -337,7 +337,7 @@ class ebyteE220:
         else:
             print(f'set spr OK')
             print(self.device)
-            return self.get_config()
+            return 'OK'
 
     def set_spb(self, parity):
         self.serial_parity = parity
@@ -345,7 +345,7 @@ class ebyteE220:
         if not res:
             return 'set parity bit error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_adr(self, airdata):
         self.air_data_rate = airdata
@@ -353,7 +353,7 @@ class ebyteE220:
         if not res:
             return 'set air data rate error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_sub_packet(self, packet):
         self.sub_packet_setting = packet
@@ -361,7 +361,7 @@ class ebyteE220:
         if not res:
             return 'set sub-packet setting error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_tx_power(self, power):
         self.transmitting_power = power
@@ -369,7 +369,7 @@ class ebyteE220:
         if not res:
             return 'set transmitting power error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_ch(self, ch: int):
         self.channel = ch
@@ -381,7 +381,7 @@ class ebyteE220:
             if ch > conf[7]:
                 print(f'maximum channel for this module is {conf[7]}')
                 print(f'channel set {conf[7]}')
-            return self.get_config()
+            return 'OK'
 
     def set_trans_mode(self):
         self.transmission_method = TxMethod.Transparent_transmission_mode
@@ -389,7 +389,7 @@ class ebyteE220:
         if not res:
             return 'set transparent transmission mode error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_fixed_mode(self):
         self.transmission_method = TxMethod.Fixed_transmission_mode
@@ -397,7 +397,7 @@ class ebyteE220:
         if not res:
             return 'set fixed transmission mode error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def set_wor(self, cycle):
         self.wor_cycle = cycle
@@ -405,7 +405,7 @@ class ebyteE220:
         if not res:
             return 'set WOR cycle error'
         else:
-            return self.get_config()
+            return 'OK'
 
     def tx(self, message, mode='TxRx'):
         try:
