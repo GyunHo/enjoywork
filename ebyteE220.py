@@ -57,17 +57,17 @@ class RSSI_AmbientNoiseEnable:
 
 
 class TxPower30:
-    dBm30 = '00'
-    dBm27 = '01'
-    dBm24 = '10'
-    dBm21 = '11'
+    dBm_30 = '00'
+    dBm_27 = '01'
+    dBm_24 = '10'
+    dBm_21 = '11'
 
 
 class TxPower22:
-    dBm22 = '00'
-    dBm17 = '01'
-    dBm13 = '10'
-    dBm10 = '11'
+    dBm_22 = '00'
+    dBm_17 = '01'
+    dBm_13 = '10'
+    dBm_10 = '11'
 
 
 class EnableRSSIByte:
@@ -78,8 +78,8 @@ class EnableRSSIByte:
 class TxMethod:
     '''with REG3-5 Reserve'''
     '''disalbe 0 or enable 1 + reserve 0 '''
-    Transparent_transmission_mode = '00'
-    Fixed_transmission_mode = '01'
+    Transparent_mode = '00'
+    Fixed_mode = '01'
 
 
 class LBTEnable:
@@ -151,7 +151,7 @@ class ebyteE220:
         self.reg1_index = 6
         self.sub_packet_setting = SubPacketSetting.SPS_200bytes
         self.rssi_ambient_noise = RSSI_AmbientNoiseEnable.RSSIAmbientNoise_Disable  # RSSI Ambient noise (default disable)
-        self.transmitting_power = TxPower22.dBm22
+        self.transmitting_power = TxPower22.dBm_22  # tx power default 22dBm
 
         '''REG2'''
         self.reg2_index = 7
@@ -283,7 +283,7 @@ class ebyteE220:
         print('air data rate         ', reg0[2])
         print('sub-packet setting    ', reg1[0].split('_')[1])
         print('RSSI ambient noise    ', reg1[1].split('_')[1])
-        print('transmitting power    ', reg1[2])
+        print('transmitting power    ', reg1[2].split('_')[1] + 'dBm')
         print('channel               ', channel)
         print('RSSI byte             ', reg3[0].split('_')[1])
         print('transmission method   ', reg3[1])
